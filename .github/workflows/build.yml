@@ -132,5 +132,5 @@ jobs:
         if: env.KEYSTORE_FILE != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.CUSTOM_APP_NAME }}-${{ env.VERSION_CODE }}
+          name: ${{ env.CUSTOM_APP_NAME }}-${{ env.VERSION_NAME }}
           path: app/build/outputs/apk/release/*-release-signed.apk
