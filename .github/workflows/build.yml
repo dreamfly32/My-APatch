@@ -22,38 +22,43 @@ jobs:
         with:
           fetch-depth: 0
 
-      
+
 
       - name: Customize APK identity (package name, app name)
         run: |
           echo "Replacing package name with: $CUSTOM_PACKAGE_NAME"
           echo "Replacing app name with: $CUSTOM_APP_NAME"
-
           # 1. Replace namespace in build.gradle.kts
                    # Remove existing applicationId line (if any)
           sed -i '/applicationId = "/d' app/build.gradle.kts
           # Add new one inside defaultConfig
           sed -i "/^ *defaultConfig {/a\        applicationId = \"$CUSTOM_PACKAGE_NAME\"" app/build.gradle.kts
-          cat app/build.gradle.kts
+          #cat app/build.gradle.kts
           
-
           # 2. Replace app_name in all strings.xml
           find app/src/main/res -name "strings.xml" -exec sed -i "s|<string name=\"app_name\" translatable=\"false\">.*</string>|<string name=\"app_name\" translatable=\"false\">$CUSTOM_APP_NAME</string>|g" {} \;
-
           # 3. Replace android:label in AndroidManifest.xml
           sed -i "s/android:label=\"[^\"]*\"/android:label=\"$CUSTOM_APP_NAME\"/g" app/src/main/AndroidManifest.xml
-         
-
-          sed -i 's/fun verifyAppSignature(validSignature: String): Boolean {/fun verifyAppSignature(validSignature: String): Boolean {\n    return true\n    /' app/src/main/java/me/bmax/apatch/util/APatchCli.kt
           
+          sed -i 's/fun verifyAppSignature(validSignature: String): Boolean {/fun verifyAppSignature(validSignature: String): Boolean {\n    return true\n    /' app/src/main/java/me/bmax/apatch/util/APatchCli.kt
 
       - name: Generate version
         id: parse_version
         run: |
           COMMIT_NUM=$(git rev-list --count HEAD)
-          VERSION=$(echo "$COMMIT_NUM + 200 + 10000" | bc)
-          echo "Generated Version: $VERSION"
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          VERSION_CODE=$((COMMIT_NUM + 200 + 10000))
+          COMMIT_HASH=$(git rev-parse --short HEAD)
+          VERSION_NAME="${VERSION_CODE}_${COMMIT_HASH}"
+          BRANCH=$(echo "${GITHUB_REF#refs/heads/}" | sed 's/refs\/tags\///')
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_OUTPUT
+          echo "VERSION_NAME=$VERSION_NAME" >> $GITHUB_OUTPUT
+          echo "COMMIT_HASH=$COMMIT_HASH" >> $GITHUB_OUTPUT
+          echo "BRANCH_NAME=$BRANCH" >> $GITHUB_OUTPUT
+          
+          echo "Generated versionCode: $VERSION_CODE"
+          echo "Generated versionName: $VERSION_NAME"
+          
+          
 
       - name: Setup Java
         uses: actions/setup-java@v5
@@ -75,7 +80,6 @@ jobs:
           rustup update stable
           cargo install cargo-ndk
           rustup target install aarch64-linux-android
-
       - name: Cache Rust
         uses: Swatinem/rust-cache@v2
         with:
@@ -89,10 +93,12 @@ jobs:
           echo 'org.gradle.jvmargs=-Xmx2048m' >> gradle.properties
           echo 'android.native.buildOutput=verbose' >> gradle.properties
           sed -i 's/org.gradle.configuration-cache=true//g' gradle.properties
-          ./gradlew clean assembleRelease
+          ./gradlew clean assembleRelease  \
+            -PmanagerVersionCode=${{ steps.parse_version.outputs.VERSION_CODE }} \
+            -PmanagerVersionName=${{ steps.parse_version.outputs.VERSION_NAME }} \
+            -Pbranchname=${{ steps.parse_version.outputs.BRANCH_NAME }}
           echo "BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | tail -n 1)" >> $GITHUB_ENV
 
-      
 
       - name: Sign APK (if keystore provided)
         if: env.KEYSTORE_FILE != ''
@@ -121,5 +127,5 @@ jobs:
         if: env.KEYSTORE_FILE != ''
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ env.CUSTOM_APP_NAME }}-${{ env.VERSION_CODE }}
+          name: ${{ env.CUSTOM_APP_NAME }}-${{ env.$VERSION_NAME }}
           path: app/build/outputs/apk/release/*-release-signed.apk
