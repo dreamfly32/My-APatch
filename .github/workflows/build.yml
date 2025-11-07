@@ -1,134 +1,103 @@
-name: Build Manager
+name: Build APatch Manager
 
 on:
-  push:
-    tags: [ "*" ]
-    branches: [ "main" ]
-    paths:
-      - '.github/workflows/build.yml'
-      - 'app/**'
-      - 'apd/**'
-      - 'build.gradle.kts'
-      - 'gradle/libs.versions.toml'
-  pull_request:
-    branches: [ "main" ]
-    paths:
-      - '.github/workflows/build.yml'
-      - 'app/**'
-      - 'apd/**'
-      - 'build.gradle.kts'
-      - 'gradle/libs.versions.toml'
-  workflow_call:
   workflow_dispatch:
+
+env:
+  # 可选：从输入或默认值获取
+  CUSTOM_APP_NAME: ${{ github.event.inputs.app_name || 'MyPatch' }}
+  CUSTOM_PACKAGE_NAME: ${{ github.event.inputs.package_name || 'com.example.mypatch' }}
 
 jobs:
   build-manager:
     runs-on: ubuntu-latest
     permissions:
       contents: write
+
     steps:
       - name: Checkout
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
-      - name: Generate version
+      - name: Set up JDK 21
+        uses: actions/setup-java@v4
+        with:
+          java-version: '21'
+          distribution: 'temurin'
+
+      - name: Set up Python (for version calc)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Generate version info
         id: parse_version
         run: |
           COMMIT_NUM=$(git rev-list --count HEAD)
-          VERSION=$(echo "$COMMIT_NUM + 200 + 10000" | bc)
-          echo "Generated Version: $VERSION"
-          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          VERSION_CODE=$((COMMIT_NUM + 200 + 10000))
+          BRANCH_NAME=$(echo "${GITHUB_REF#refs/heads/}" | sed 's|/|_|g')
+          echo "VERSION_CODE=$VERSION_CODE" >> $GITHUB_ENV
+          echo "BRANCH_NAME=$BRANCH_NAME" >> $GITHUB_ENV
+          echo "VERSION_NAME=${{ env.CUSTOM_APP_NAME }}_${VERSION_CODE}" >> $GITHUB_ENV
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: jetbrains
-          java-version: 21
-
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v5
-
-      - name: Setup Android SDK
-        uses: android-actions/setup-android@v3
-        with:
-          packages: ''
-
-      - name: Install toolchain
+      - name: Customize APK identity (package name, app name)
         run: |
-          rustup default stable
-          rustup update stable
+          echo "Replacing package name with: $CUSTOM_PACKAGE_NAME"
+          echo "Replacing app name with: $CUSTOM_APP_NAME"
+
+          # 1. Replace namespace in build.gradle.kts
+          sed -i "s/namespace = \".*\"/namespace = \"$CUSTOM_PACKAGE_NAME\"/" app/build.gradle.kts
+
+          # 2. Replace app_name in all strings.xml
+          find app/src/main/res -name "strings.xml" -exec sed -i "s|<string name=\"app_name\" translatable=\"false\">.*</string>|<string name=\"app_name\" translatable=\"false\">$CUSTOM_APP_NAME</string>|g" {} \;
+
+          # 3. Replace android:label in AndroidManifest.xml
+          sed -i "s/android:label=\"[^\"]*\"/android:label=\"$CUSTOM_APP_NAME\"/g" app/src/main/AndroidManifest.xml
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android
+
+      - name: Install cargo-ndk
+        run: |
           cargo install cargo-ndk
-          rustup target install aarch64-linux-android
+          rustup target add aarch64-linux-android
 
-      - name: Cache Rust
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: apd
-          cache-targets: false
+      - name: Grant execute permission for gradlew
+        run: chmod +x ./gradlew
 
-      - name: Build with Gradle
+      - name: Build release APK
         run: |
-          echo 'org.gradle.parallel=true' >> gradle.properties
-          echo 'org.gradle.vfs.watch=true' >> gradle.properties
-          echo 'org.gradle.jvmargs=-Xmx2048m' >> gradle.properties
-          echo 'android.native.buildOutput=verbose' >> gradle.properties
-          sed -i 's/org.gradle.configuration-cache=true//g' gradle.properties
-          ./gradlew clean assembleRelease
-          echo "BUILD_TOOL_VERSION=$(ls /usr/local/lib/android/sdk/build-tools/ | tail -n 1)" >> $GITHUB_ENV
+          ./gradlew assembleRelease \
+            -PmanagerVersionCode=$VERSION_CODE \
+            -PmanagerVersionName="$VERSION_NAME" \
+            -Pbranchname="$BRANCH_NAME" \
+            -PkernelPatchVersion="0.10.7"  # ←←← 根据需要调整版本
 
-      - name: Sign Release
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-          BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
-        if: ${{ env.SIGNING_KEY != '' }}
-        continue-on-error: true
-        uses: kevin-david/zipalign-sign-android-release@v2
-        id: sign_app
+      - name: Sign APK (if keystore provided)
+        if: env.KEYSTORE_FILE != ''
+        uses: r0adkll/sign-android-release@v1
         with:
           releaseDirectory: app/build/outputs/apk/release
-          signingKeyBase64: ${{ secrets.SIGNING_KEY }}
-          alias: ${{ secrets.ALIAS }}
+          signingKeyBase64: ${{ secrets.KEYSTORE_FILE }}
+          alias: ${{ secrets.KEY_ALIAS }}
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
-          zipAlign: true
-
-      - name: Upload build artifact
         env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' }}
-        uses: actions/upload-artifact@v5
+          KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+
+      - name: Upload unsigned APK (fallback)
+        if: env.KEYSTORE_FILE == ''
+        uses: actions/upload-artifact@v4
         with:
-          name: APatch
-          path: ${{steps.sign_app.outputs.signedReleaseFile}}
+          name: apatch-manager-unsigned
+          path: app/build/outputs/apk/release/*.apk
 
-      - name: Post to channel
-        if: ${{github.event_name != 'pull_request' && github.ref == 'refs/heads/main' && github.ref_type != 'tag'}}
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
-          COMMIT_URL: ${{ github.event.head_commit.url }}
-          COMMIT_ID: ${{ github.event.head_commit.id }}
-        run: |
-          if [ ! -z "${{ secrets.BOT_TOKEN }}" ]; then
-            OUTPUT="app/build/outputs/apk/release"
-            export Release=$(find $OUTPUT -name "*.apk")
-            URL=$(python3 .github/scripts/telegram_url.py -1002058433411)
-            curl -v "$URL" -F Release=@${{ steps.sign_app.outputs.signedReleaseFile }}
-            URL=$(python3 .github/scripts/telegram_url.py -1001910818234)
-            curl -v "$URL" -F Release=@${{ steps.sign_app.outputs.signedReleaseFile }}
-          fi
-
-      - name: Release apk
-        env:
-          SIGNING_KEY: ${{ secrets.SIGNING_KEY }}
-        if: ${{ env.SIGNING_KEY != '' && github.ref_type == 'tag' }}
-        continue-on-error: true
-        uses: ncipollo/release-action@v1
+      - name: Upload signed APK
+        if: env.KEYSTORE_FILE != ''
+        uses: actions/upload-artifact@v4
         with:
-          token: ${{ github.token }}
-          tag: ${{ steps.parse_version.outputs.VERSION }}
-          artifacts: ${{steps.sign_app.outputs.signedReleaseFile}}
-          generateReleaseNotes: true
-          makeLatest: true
-          replacesArtifacts: true
+          name: ${{ env.CUSTOM_APP_NAME }}-${{ env.VERSION_CODE }}
+          path: app/build/outputs/apk/release/*-release-signed.apk
