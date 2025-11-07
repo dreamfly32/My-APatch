@@ -11,6 +11,8 @@ env:
 jobs:
   build-manager:
     runs-on: ubuntu-latest
+    env:
+      KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}   # 👈 全局可用！
     permissions:
       contents: write
 
