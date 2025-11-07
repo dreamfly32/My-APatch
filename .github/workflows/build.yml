@@ -59,6 +59,7 @@ jobs:
 
           sed -i 's/fun verifyAppSignature(validSignature: String): Boolean {/fun verifyAppSignature(validSignature: String): Boolean {\n    return true\n    /' app/src/main/java/me/bmax/apatch/util/APatchCli.kt
           cat app/src/main/java/me/bmax/apatch/util/APatchCli.kt
+          cat app/src/main/res/values-zh-rCN/strings.xml
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
