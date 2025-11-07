@@ -95,15 +95,18 @@ jobs:
       - name: Sign APK (if keystore provided)
         if: env.KEYSTORE_FILE != ''
         continue-on-error: true
-        uses: r0adkll/sign-android-release@v1
+        uses: kevin-david/zipalign-sign-android-release@v2
+        id: sign_app
         with:
           releaseDirectory: app/build/outputs/apk/release
           signingKeyBase64: ${{ secrets.KEYSTORE_FILE }}
           alias: ${{ secrets.KEY_ALIAS }}
           keyStorePassword: ${{ secrets.KEY_STORE_PASSWORD }}
           keyPassword: ${{ secrets.KEY_PASSWORD }}
+          zipAlign: true
         env:
           KEYSTORE_FILE: ${{ secrets.KEYSTORE_FILE }}
+          BUILD_TOOLS_VERSION: ${{ env.BUILD_TOOL_VERSION }}
 
       - name: Upload unsigned APK (fallback)
         if: env.KEYSTORE_FILE == ''
