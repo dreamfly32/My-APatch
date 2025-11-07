@@ -47,19 +47,22 @@ jobs:
           echo "Replacing app name with: $CUSTOM_APP_NAME"
 
           # 1. Replace namespace in build.gradle.kts
-          sed -i "s/namespace = \".*\"/namespace = \"$CUSTOM_PACKAGE_NAME\"/" app/build.gradle.kts
+                   # Remove existing applicationId line (if any)
+          sed -i '/applicationId = "/d' app/build.gradle.kts
+          # Add new one inside defaultConfig
+          sed -i "/^ *defaultConfig {/a\        applicationId = \"$CUSTOM_PACKAGE_NAME\"" app/build.gradle.kts
           cat app/build.gradle.kts
+          
 
           # 2. Replace app_name in all strings.xml
-          #find app/src/main/res -name "strings.xml" -exec sed -i "s|<string name=\"app_name\" translatable=\"false\">.*</string>|<string name=\"app_name\" translatable=\"false\">$CUSTOM_APP_NAME</string>|g" {} \;
+          find app/src/main/res -name "strings.xml" -exec sed -i "s|<string name=\"app_name\" translatable=\"false\">.*</string>|<string name=\"app_name\" translatable=\"false\">$CUSTOM_APP_NAME</string>|g" {} \;
 
           # 3. Replace android:label in AndroidManifest.xml
           sed -i "s/android:label=\"[^\"]*\"/android:label=\"$CUSTOM_APP_NAME\"/g" app/src/main/AndroidManifest.xml
-          cat app/src/main/AndroidManifest.xml
+         
 
           sed -i 's/fun verifyAppSignature(validSignature: String): Boolean {/fun verifyAppSignature(validSignature: String): Boolean {\n    return true\n    /' app/src/main/java/me/bmax/apatch/util/APatchCli.kt
-          cat app/src/main/java/me/bmax/apatch/util/APatchCli.kt
-          cat app/src/main/res/values-zh-rCN/strings.xml
+          
 
       - name: Set up Rust
         uses: dtolnay/rust-toolchain@stable
