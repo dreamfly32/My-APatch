@@ -62,7 +62,12 @@ jobs:
           
           echo "Generated versionCode: $VERSION_CODE"
           echo "Generated versionName: $VERSION_NAME"
-
+          
+      - name: Patch getVersionName() in root build.gradle.kts
+        run: |
+          sed -i '/fun getVersionName()/,/^}/ s/return getGitDescribe()/return "\${managerVersionCode}_\${getGitDescribe()}"/' build.gradle.kts
+          grep -A2 "getVersionName" build.gradle.kts
+          
       - name: Setup Java
         uses: actions/setup-java@v5
         with:
